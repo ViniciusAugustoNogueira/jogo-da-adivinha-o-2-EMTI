@@ -97,7 +97,6 @@
     }
     table{width:100%;border-collapse:collapse}
     th,td{padding:8px;text-align:left;border-bottom:1px solid #f0f0f0}
-    .controls{display:flex;gap:8px;align-items:center}
     @media(max-width:800px){
       .wrap{grid-template-columns:1fr; height:auto}
     }
@@ -108,7 +107,7 @@
     <div class="left">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
         <h1>🎯 Adivinhe o número entre 1 e 100</h1>
-        <div class="hint small">Versão web — ranking local</div>
+        <div class="hint small">Versão web — ranking online</div>
       </div>
 
       <div>
@@ -133,18 +132,8 @@
         <div class="small">Dicas:</div>
         <ul style="margin:6px 0 0 18px" class="small">
           <li>Use Enter para enviar</li>
-          <li>O ranking salva localmente no seu navegador</li>
-          <li>Exporte/importe ranking para mover entre computadores</li>
+          <li>O ranking é salvo online (npoint.io)</li>
         </ul>
-      </div>
-
-      <div style="margin-top:12px">
-        <div class="controls">
-          <button id="exportBtn" class="btn">Exportar ranking</button>
-          <input id="importFile" type="file" accept="application/json" style="display:none" />
-          <button id="importBtn" class="btn">Importar ranking</button>
-          <button id="clearRankingBtn" class="btn" style="background:var(--danger);color:#fff">Limpar ranking</button>
-        </div>
       </div>
     </div>
 
@@ -161,11 +150,7 @@
           <input id="maxRange" type="number" value="100" style="width:72px" />
           <button id="newRangeBtn" class="btn">Aplicar intervalo</button>
         </div>
-        <div class="small">Define o intervalo do número secreto. Por padrão: 1 - 100</div>
-      </div>
-
-      <div style="display:flex;justify-content:flex-end">
-        <button id="closeRankingBtn" class="btn" style="display:none">Fechar</button>
+        <div class="small">Define o intervalo do número secreto. Padrão: 1 - 100</div>
       </div>
     </div>
   </div>
@@ -187,9 +172,7 @@
   </div>
 
   <script>
-    // --- Lógica do jogo em JS (replica comportamentos do teu .py) ---
     (function(){
-      // elementos
       const playerName = document.getElementById('playerName');
       const guessInput = document.getElementById('guessInput');
       const sendBtn = document.getElementById('sendBtn');
@@ -201,27 +184,39 @@
       const rankingTableBody = document.querySelector('#rankingTable tbody');
       const showRankingBtn = document.getElementById('showRankingBtn');
       const closeModalBtn = document.getElementById('closeModalBtn');
-      const exportBtn = document.getElementById('exportBtn');
-      const importBtn = document.getElementById('importBtn');
-      const importFile = document.getElementById('importFile');
-      const clearRankingBtn = document.getElementById('clearRankingBtn');
       const minRange = document.getElementById('minRange');
       const maxRange = document.getElementById('maxRange');
       const newRangeBtn = document.getElementById('newRangeBtn');
 
-      // estado
       let minVal = 1, maxVal = 100;
       let secret = randRange(minVal, maxVal);
       let attempts = 0;
 
-      // ranking em localStorage -> array de objetos {nome, tentativas, data}
-      function loadRanking(){ 
+      // === CONFIGURAÇÃO DO RANKING ONLINE ===
+      const API_URL = "https://api.npoint.io/25b15bd915d774203d0d";
+
+      async function loadRanking(){
         try {
-          return JSON.parse(localStorage.getItem('ranking_v1')) || [];
-        } catch(e){ return []; }
+          const res = await fetch(API_URL);
+          if(!res.ok) throw new Error("Erro ao buscar dados");
+          const data = await res.json();
+          return Array.isArray(data) ? data : [];
+        } catch(e){
+          console.error("Erro ao carregar ranking:", e);
+          return [];
+        }
       }
-      function saveRanking(arr){
-        localStorage.setItem('ranking_v1', JSON.stringify(arr));
+
+      async function saveRanking(arr){
+        try {
+          await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(arr)
+          });
+        } catch(e){
+          console.error("Erro ao salvar ranking:", e);
+        }
       }
 
       function randRange(a,b){
@@ -243,7 +238,7 @@
         return n ? String(n).trim().slice(0,40) : '';
       }
 
-      function submitGuess(){
+      async function submitGuess(){
         const name = sanitizeName(playerName.value);
         if(!name){
           alert('Por favor, digite seu nome antes de jogar!');
@@ -275,13 +270,13 @@
           resultText.textContent = '🔽 O número é MENOR!';
         } else {
           resultText.textContent = `🎉 Você acertou em ${attempts} tentativas!`;
-          // salvar ranking
-          const ranking = loadRanking();
+
+          // Carrega ranking atual, adiciona o jogador e salva novamente
+          const ranking = await loadRanking();
           ranking.push({ nome: name, tentativas: attempts, data: new Date().toISOString() });
-          // ordenar: tentativas asc, nome asc
           ranking.sort((a,b) => a.tentativas - b.tentativas || a.nome.localeCompare(b.nome, 'pt'));
-          saveRanking(ranking);
-          // perguntar jogar de novo
+          await saveRanking(ranking);
+
           setTimeout(()=> {
             if(confirm(`🎉 Você acertou em ${attempts} tentativas!\n\nDeseja jogar novamente?`)){
               restartGame();
@@ -294,18 +289,17 @@
         guessInput.focus();
       }
 
-      // eventos
       sendBtn.addEventListener('click', submitGuess);
       guessInput.addEventListener('keydown', (e) => {
         if(e.key === 'Enter') submitGuess();
       });
       restartBtn.addEventListener('click', restartGame);
 
-      // ranking modal
-      function showRanking(){
-        const ranking = loadRanking();
+      async function showRanking(){
+        const ranking = await loadRanking();
         rankingTableBody.innerHTML = '';
-        if(ranking.length === 0){
+
+        if (!Array.isArray(ranking) || ranking.length === 0){
           const tr = document.createElement('tr');
           const td = document.createElement('td');
           td.colSpan = 2;
@@ -317,16 +311,19 @@
           ranking.forEach(row => {
             const tr = document.createElement('tr');
             const nome = document.createElement('td');
-            nome.textContent = row.nome;
+            nome.textContent = row.nome || '(sem nome)';
             const t = document.createElement('td');
-            t.textContent = row.tentativas;
-            tr.appendChild(nome); tr.appendChild(t);
+            t.textContent = row.tentativas ?? '?';
+            tr.appendChild(nome);
+            tr.appendChild(t);
             rankingTableBody.appendChild(tr);
           });
         }
+
         rankingModal.style.display = 'flex';
         rankingModal.setAttribute('aria-hidden','false');
       }
+
       showRankingBtn.addEventListener('click', showRanking);
       closeModalBtn.addEventListener('click', () => {
         rankingModal.style.display = 'none';
@@ -338,51 +335,6 @@
         }
       });
 
-      // export/import ranking
-      exportBtn.addEventListener('click', () => {
-        const data = loadRanking();
-        const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'ranking_adivinhacao.json';
-        a.click();
-        URL.revokeObjectURL(url);
-      });
-
-      importBtn.addEventListener('click', () => importFile.click());
-      importFile.addEventListener('change', (evt) => {
-        const f = evt.target.files[0];
-        if(!f) return;
-        const reader = new FileReader();
-        reader.onload = function(ev){
-          try {
-            const parsed = JSON.parse(ev.target.result);
-            if(!Array.isArray(parsed)) throw new Error('Formato inválido');
-            // validar elementos mínimos
-            const clean = parsed.filter(x => x && x.nome && Number.isFinite(Number(x.tentativas))).map(x => ({
-              nome: String(x.nome).slice(0,40),
-              tentativas: Number(x.tentativas),
-              data: x.data || new Date().toISOString()
-            }));
-            saveRanking(clean);
-            alert('Ranking importado com sucesso!');
-          } catch(e){
-            alert('Erro ao importar: arquivo inválido.');
-          }
-        };
-        reader.readAsText(f);
-        importFile.value = '';
-      });
-
-      clearRankingBtn.addEventListener('click', () => {
-        if(confirm('Tem certeza que deseja limpar o ranking local?')){
-          saveRanking([]);
-          alert('Ranking limpo.');
-        }
-      });
-
-      // range
       newRangeBtn.addEventListener('click', () => {
         const a = Number(minRange.value) || 1;
         const b = Number(maxRange.value) || 100;
@@ -396,10 +348,7 @@
         alert(`Intervalo atualizado: ${minVal} - ${maxVal}`);
       });
 
-      // iniciar
       restartGame();
-
-      // accessibility: foco inicial
       playerName.focus();
     })();
   </script>
